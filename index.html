@@ -1,0 +1,824 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TACO — Pressured Index</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+  <style>
+    :root {
+      --bg: #07091200;
+      --bg-solid: #070912;
+      --surface: #0d1424;
+      --card: #111a2e;
+      --card2: #152038;
+      --border: #1c2d4e;
+      --border2: #243860;
+      --accent: #4f8ef7;
+      --red: #f04848;
+      --red2: #ff6b6b;
+      --amber: #f5a623;
+      --green: #1fcb8a;
+      --green2: #44e4a8;
+      --text: #dde4f5;
+      --text2: #8898bb;
+      --text3: #4a5e7e;
+      --white: #ffffff;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { min-height: 100vh; }
+    body {
+      background: var(--bg-solid);
+      background-image:
+        radial-gradient(ellipse 80% 50% at 50% -10%, rgba(79,142,247,0.08) 0%, transparent 70%);
+      color: var(--text);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+      padding: 24px 20px 48px;
+    }
+
+    /* ── LOADING ── */
+    #loading {
+      position: fixed; inset: 0; z-index: 200;
+      background: var(--bg-solid);
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 18px;
+    }
+    .spinner {
+      width: 38px; height: 38px;
+      border: 3px solid var(--border2);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.75s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #load-msg { font-size: 13px; color: var(--text2); }
+
+    /* ── MAIN GRID ── */
+    #app { display: none; max-width: 1160px; margin: 0 auto; }
+
+    /* ── HEADER ── */
+    .topbar {
+      display: flex; justify-content: space-between; align-items: flex-start;
+      margin-bottom: 28px;
+    }
+    .brand { display: flex; align-items: baseline; gap: 10px; }
+    .brand h1 {
+      font-size: 26px; font-weight: 800; letter-spacing: -0.5px;
+      background: linear-gradient(135deg, #4f8ef7 0%, #9b6bf5 100%);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    .brand .tagline { font-size: 12px; color: var(--text2); letter-spacing: 0.4px; }
+    .topbar-right { display: flex; align-items: center; gap: 10px; }
+    .live-badge {
+      display: flex; align-items: center; gap: 5px;
+      font-size: 11px; color: var(--text2);
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: 20px; padding: 4px 10px;
+    }
+    .live-dot {
+      width: 6px; height: 6px; border-radius: 50%; background: var(--green);
+      box-shadow: 0 0 6px var(--green);
+      animation: pulse 2s ease-in-out infinite;
+    }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+    .btn {
+      background: var(--card); border: 1px solid var(--border);
+      color: var(--text2); padding: 6px 14px; border-radius: 7px;
+      cursor: pointer; font-size: 12px; font-weight: 500;
+      transition: all 0.15s;
+    }
+    .btn:hover { background: var(--card2); color: var(--text); border-color: var(--border2); }
+
+    /* ── ERROR BANNER ── */
+    .error-bar {
+      display: none;
+      background: rgba(240,72,72,0.1); border: 1px solid rgba(240,72,72,0.3);
+      color: #f08080; border-radius: 8px;
+      padding: 14px 18px; font-size: 13px; margin-bottom: 18px;
+      line-height: 1.7;
+    }
+    .error-bar code {
+      font-family: 'Menlo', 'Consolas', monospace;
+      font-size: 12px; color: #e0e8ff;
+    }
+    .error-bar strong { color: #f0a0a0; }
+
+    /* ── HERO ── */
+    .hero {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 28px 32px;
+      display: grid;
+      grid-template-columns: 200px 1fr;
+      gap: 32px;
+      align-items: center;
+      margin-bottom: 18px;
+    }
+    .taco-big { text-align: center; }
+    .taco-big-label {
+      font-size: 10px; font-weight: 700; letter-spacing: 2px;
+      text-transform: uppercase; color: var(--text2); margin-bottom: 6px;
+    }
+    .taco-num {
+      font-size: 80px; font-weight: 800; letter-spacing: -4px; line-height: 1;
+      transition: color 0.4s;
+    }
+    .taco-num.hi  { color: var(--red); }
+    .taco-num.lo  { color: var(--green); }
+    .taco-num.mid { color: var(--amber); }
+    .taco-date { font-size: 12px; color: var(--text3); margin-top: 6px; }
+    .hero-stats {
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: 0;
+    }
+    .stat-item {
+      padding: 10px 16px;
+      border-right: 1px solid var(--border);
+    }
+    .stat-item:last-child { border-right: none; }
+    .stat-label { font-size: 10px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; color: var(--text3); margin-bottom: 4px; }
+    .stat-val { font-size: 22px; font-weight: 700; letter-spacing: -0.5px; }
+    .stat-sub { font-size: 11px; color: var(--text2); margin-top: 1px; }
+
+    /* ── COMPONENT CARDS ── */
+    .comps { display: grid; grid-template-columns: repeat(4,1fr); gap: 14px; margin-bottom: 18px; }
+    .comp-card {
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: 11px; padding: 18px 16px;
+      transition: border-color 0.2s;
+    }
+    .comp-card:hover { border-color: var(--border2); }
+    .comp-name { font-size: 10px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; color: var(--text2); margin-bottom: 14px; }
+    .comp-z { font-size: 36px; font-weight: 800; letter-spacing: -1.5px; line-height: 1; margin-bottom: 4px; }
+    .comp-raw { font-size: 12px; color: var(--text2); margin-bottom: 10px; }
+    .comp-bar-bg { height: 3px; background: var(--border); border-radius: 2px; overflow: hidden; }
+    .comp-bar-fill { height: 100%; border-radius: 2px; transition: width 0.5s ease; }
+    .comp-tag {
+      display: inline-block; font-size: 10px; font-weight: 600;
+      padding: 2px 7px; border-radius: 4px; margin-top: 8px;
+      background: rgba(79,142,247,0.1); color: var(--accent);
+    }
+    .tag-up { background: rgba(240,72,72,0.1); color: var(--red2); }
+    .tag-down { background: rgba(31,203,138,0.1); color: var(--green2); }
+
+    /* ── CHART SECTION ── */
+    .chart-section {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 14px; padding: 22px 24px; margin-bottom: 18px;
+    }
+    .section-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; }
+    .section-title { font-size: 14px; font-weight: 600; }
+    .tabs { display: flex; gap: 6px; }
+    .tab {
+      font-size: 12px; padding: 5px 13px; border-radius: 6px; cursor: pointer;
+      border: 1px solid var(--border); background: transparent;
+      color: var(--text2); transition: all 0.15s;
+    }
+    .tab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .chart-wrap { height: 300px; position: relative; }
+
+    /* ── APPROVAL SECTION ── */
+    .approval-section {
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: 14px; padding: 22px 24px; margin-bottom: 18px;
+    }
+    .approval-body { display: grid; grid-template-columns: auto 1fr; gap: 24px; align-items: start; margin-top: 16px; }
+    .approval-form { display: flex; gap: 10px; align-items: flex-end; }
+    .field { display: flex; flex-direction: column; gap: 5px; }
+    .field label { font-size: 10px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; color: var(--text2); }
+    .field input {
+      background: var(--surface); border: 1px solid var(--border);
+      color: var(--text); padding: 8px 11px; border-radius: 7px;
+      font-size: 14px; width: 120px;
+    }
+    .field input[type="date"] { width: 150px; }
+    .field input:focus { outline: none; border-color: var(--accent); }
+    .btn-add {
+      background: var(--accent); border: none; color: #fff;
+      padding: 8px 18px; border-radius: 7px; cursor: pointer;
+      font-size: 13px; font-weight: 600; transition: opacity 0.15s; white-space: nowrap;
+    }
+    .btn-add:hover { opacity: 0.85; }
+    .approval-list {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 8px; padding: 10px 14px;
+      max-height: 160px; overflow-y: auto;
+    }
+    .ap-entry {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 5px 0; font-size: 13px;
+      border-bottom: 1px solid var(--border);
+    }
+    .ap-entry:last-child { border-bottom: none; }
+    .ap-date { color: var(--text2); }
+    .ap-val { font-weight: 600; }
+    .del { background: none; border: none; color: var(--text3); cursor: pointer; font-size: 16px; padding: 0 4px; }
+    .del:hover { color: var(--red); }
+    .ap-empty { font-size: 12px; color: var(--text3); padding: 6px 0; }
+
+    /* ── FOOTER ── */
+    .footer { text-align: center; font-size: 11px; color: var(--text3); padding-top: 6px; }
+
+    /* ── RESPONSIVE ── */
+    @media (max-width: 900px) {
+      .comps { grid-template-columns: repeat(2,1fr); }
+      .hero { grid-template-columns: 1fr; }
+      .hero-stats { grid-template-columns: repeat(2,1fr); }
+      .approval-body { grid-template-columns: 1fr; }
+      .approval-form { flex-wrap: wrap; }
+    }
+    @media (max-width: 500px) {
+      .comps { grid-template-columns: 1fr; }
+      .hero-stats { grid-template-columns: 1fr 1fr; }
+      body { padding: 16px 12px 40px; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- LOADING -->
+<div id="loading">
+  <div class="spinner"></div>
+  <div id="load-msg">Initialising TACO…</div>
+</div>
+
+<!-- APP -->
+<div id="app">
+
+  <!-- TOPBAR -->
+  <div class="topbar">
+    <div class="brand">
+      <h1>🌮 TACO</h1>
+      <span class="tagline">Pressured Index &mdash; equally weighted z-score composite</span>
+    </div>
+    <div class="topbar-right">
+      <div class="live-badge">
+        <div class="live-dot"></div>
+        <span id="updated-lbl">—</span>
+      </div>
+      <button class="btn" onclick="boot(true)">↻ Refresh</button>
+    </div>
+  </div>
+
+  <!-- ERROR -->
+  <div class="error-bar" id="err-bar"></div>
+
+  <!-- HERO -->
+  <div class="hero">
+    <div class="taco-big">
+      <div class="taco-big-label">TACO Index</div>
+      <div class="taco-num" id="taco-num">—</div>
+      <div class="taco-date" id="taco-date">—</div>
+    </div>
+    <div class="hero-stats" id="hero-stats">
+      <div class="stat-item">
+        <div class="stat-label">1-Day Δ</div>
+        <div class="stat-val" id="s1d">—</div>
+        <div class="stat-sub">vs yesterday</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-label">1-Week Δ</div>
+        <div class="stat-val" id="s1w">—</div>
+        <div class="stat-sub">vs 5 days ago</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-label">Percentile</div>
+        <div class="stat-val" id="spct">—</div>
+        <div class="stat-sub">since Apr 2025</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-label">Components</div>
+        <div class="stat-val" id="scomp">—</div>
+        <div class="stat-sub">active / 4</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- COMPONENTS -->
+  <div class="comps" id="comps-grid"></div>
+
+  <!-- CHART -->
+  <div class="chart-section">
+    <div class="section-head">
+      <div class="section-title">Historical TACO Index</div>
+      <div class="tabs">
+        <button class="tab active" onclick="setMode('taco',this)">TACO</button>
+        <button class="tab" onclick="setMode('components',this)">Components</button>
+      </div>
+    </div>
+    <div class="chart-wrap"><canvas id="chart"></canvas></div>
+  </div>
+
+  <!-- TRUMP APPROVAL INPUT -->
+  <div class="approval-section">
+    <div class="section-head">
+      <div class="section-title">Trump Approval Rating <span style="font-size:11px;color:var(--text2);font-weight:400">(manual — enter from RealClearPolitics)</span></div>
+    </div>
+    <div class="approval-body">
+      <div class="approval-form">
+        <div class="field">
+          <label>Date</label>
+          <input type="date" id="ap-date" />
+        </div>
+        <div class="field">
+          <label>Approval %</label>
+          <input type="number" id="ap-val" placeholder="44.5" step="0.1" min="0" max="100" />
+        </div>
+        <button class="btn-add" onclick="addApproval()">Add Entry</button>
+      </div>
+      <div class="approval-list" id="ap-list">
+        <div class="ap-empty">No entries yet. Add ratings above to include approval in TACO.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FOOTER -->
+  <div class="footer">
+    Data sources: <strong>Alpha Vantage</strong> (SPY daily) · <strong>FRED</strong> (DGS10, MICH) · Manual (Trump approval) &nbsp;|&nbsp;
+    TACO = avg z-score of 20-trading-day changes · Refreshes every 30 min
+  </div>
+
+</div><!-- /app -->
+
+<script>
+/* ================================================================
+   TACO — Pressured Index
+   Components (equally weighted):
+     1. S&P 500 (SPY)          — Alpha Vantage — 20d % chg — sign −1 (falling = pressure)
+     2. 10Y Treasury (DGS10)   — FRED          — 20d bp chg — sign +1 (rising = pressure)
+     3. 1Y Infl Exp (MICH)     — FRED          — 20d pp chg — sign +1 (rising = pressure)
+     4. Trump Approval         — Manual        — 20d pp chg — sign −1 (falling = pressure)
+   All components z-scored over full sample (Apr 2025 → today).
+   TACO = mean of signed z-scores. Higher = more pressure.
+================================================================ */
+
+// ── CONFIG ──────────────────────────────────────────────────────
+const C = {
+  FRED_KEY : '1a39325553a02d282a9317725eaec95a',
+  AV_KEY   : 'AGNXML8GGZNHXP77',
+  START    : '2025-04-01',
+  AV_TTL   : 22 * 3600e3,   // 22h  (25 calls/day limit)
+  FRED_TTL :  6 * 3600e3,   // 6h
+  W        : 20,             // 20 trading-day window
+  SIGNS    : { sp500:-1, tsy:+1, mich:+1, approval:-1 }
+};
+
+// ── CACHE ────────────────────────────────────────────────────────
+const cache = {
+  get(k, force){
+    try {
+      const x = JSON.parse(localStorage.getItem(k));
+      if (!x) return null;
+      if (force || Date.now() > x.exp) return null;
+      return x.d;
+    } catch { return null; }
+  },
+  set(k, d, ttl){ localStorage.setItem(k, JSON.stringify({ d, exp: Date.now()+ttl })); }
+};
+
+// ── APPROVAL STORE ───────────────────────────────────────────────
+function getApprovals(){ try { return JSON.parse(localStorage.getItem('taco_ap')||'[]'); } catch { return []; } }
+function setApprovals(a){ localStorage.setItem('taco_ap', JSON.stringify(a)); }
+
+function addApproval(){
+  const date = document.getElementById('ap-date').value;
+  const val  = parseFloat(document.getElementById('ap-val').value);
+  if (!date || isNaN(val) || val<0 || val>100) return alert('Please enter a valid date and approval %.');
+  const a = getApprovals().filter(e=>e.d!==date);
+  a.push({ d:date, v:val });
+  a.sort((a,b)=>a.d.localeCompare(b.d));
+  setApprovals(a);
+  document.getElementById('ap-val').value='';
+  renderApList();
+  boot(true);
+}
+
+function delApproval(date){
+  setApprovals(getApprovals().filter(e=>e.d!==date));
+  renderApList();
+  boot(true);
+}
+
+function renderApList(){
+  const a = getApprovals();
+  const el = document.getElementById('ap-list');
+  if (!a.length){ el.innerHTML='<div class="ap-empty">No entries yet. Add ratings above to include approval in TACO.</div>'; return; }
+  el.innerHTML = a.slice().reverse().map(e=>`
+    <div class="ap-entry">
+      <span class="ap-date">${e.d}</span>
+      <span class="ap-val">${e.v.toFixed(1)}%</span>
+      <button class="del" onclick="delApproval('${e.d}')">×</button>
+    </div>`).join('');
+}
+
+// ── FETCH FRED ───────────────────────────────────────────────────
+async function fetchFRED(series, force=false){
+  const ck = 'fred_'+series;
+  const hit = cache.get(ck, force);
+  if (hit) return hit;
+  setLoadMsg('Fetching FRED '+series+'…');
+  const url = `https://api.stlouisfed.org/fred/series/observations?series_id=${series}&api_key=${C.FRED_KEY}&file_type=json&observation_start=${C.START}&sort_order=asc`;
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`FRED ${series} → HTTP ${r.status}`);
+  const j = await r.json();
+  if (j.error_message) throw new Error('FRED: ' + j.error_message);
+  const d = {};
+  for (const o of j.observations)
+    if (o.value!=='.' && o.value!=='') d[o.date] = parseFloat(o.value);
+  cache.set(ck, d, C.FRED_TTL);
+  return d;
+}
+
+// ── FETCH ALPHA VANTAGE (SPY) ────────────────────────────────────
+async function fetchSPY(force=false){
+  const ck = 'av_spy';
+  const hit = cache.get(ck, force);
+  if (hit) return hit;
+  setLoadMsg('Fetching S&P 500 (SPY)…');
+  const url = `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY_ADJUSTED&symbol=SPY&outputsize=full&apikey=${C.AV_KEY}`;
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`Alpha Vantage → HTTP ${r.status}`);
+  const j = await r.json();
+  if (j['Note'] || j['Information']) throw new Error('Alpha Vantage rate limit hit. Cached data will be used on next load.');
+  const ts = j['Time Series (Daily)'];
+  if (!ts) throw new Error('Unexpected Alpha Vantage response.');
+  const d = {};
+  for (const [dt, v] of Object.entries(ts))
+    if (dt >= C.START) d[dt] = parseFloat(v['5. adjusted close']);
+  cache.set(ck, d, C.AV_TTL);
+  return d;
+}
+
+// ── PROCESSING ───────────────────────────────────────────────────
+function tradingDays(spObj){ return Object.keys(spObj).sort(); }
+
+// Forward-fill a sparse series onto a list of days
+function ffill(raw, days){
+  const out = {};
+  let last = null;
+  for (const d of days){
+    if (raw[d] !== undefined) last = raw[d];
+    if (last !== null) out[d] = last;
+  }
+  return out;
+}
+
+// 20-day absolute changes (result in raw units × 100 for yields, raw % for S&P)
+function changes20(series, days, pct=false){
+  const W = C.W, out = {};
+  for (let i=W; i<days.length; i++){
+    const a = series[days[i-W]], b = series[days[i]];
+    if (a===undefined||b===undefined) continue;
+    out[days[i]] = pct ? ((b-a)/a)*100 : (b-a);
+  }
+  return out;
+}
+
+// Z-score a map of values with optional sign flip
+function zscore(chg, sign=1){
+  const vals = Object.values(chg);
+  if (vals.length < 4) return {};
+  const n = vals.length;
+  const mu = vals.reduce((s,v)=>s+v,0)/n;
+  const sd = Math.sqrt(vals.reduce((s,v)=>s+(v-mu)**2,0)/n);
+  if (sd===0) return {};
+  const out = {};
+  for (const [d,v] of Object.entries(chg)) out[d] = sign*(v-mu)/sd;
+  return out;
+}
+
+function computeTACO(z_sp, z_tsy, z_mich, z_ap){
+  const allD = new Set([...Object.keys(z_sp),...Object.keys(z_tsy),...Object.keys(z_mich)]);
+  const out = {};
+  for (const d of [...allD].sort()){
+    const parts = {};
+    if (z_sp[d]   !== undefined) parts.sp500    = z_sp[d];
+    if (z_tsy[d]  !== undefined) parts.tsy      = z_tsy[d];
+    if (z_mich[d] !== undefined) parts.mich     = z_mich[d];
+    if (z_ap[d]   !== undefined) parts.approval = z_ap[d];
+    const vs = Object.values(parts);
+    if (vs.length >= 2)
+      out[d] = { val: vs.reduce((s,v)=>s+v,0)/vs.length, n: vs.length, parts };
+  }
+  return out;
+}
+
+// ── MAIN DATA PIPELINE ───────────────────────────────────────────
+async function loadData(force=false){
+  const [spyRaw, tsyRaw, michRaw] = await Promise.all([
+    fetchSPY(force),
+    fetchFRED('DGS10', force),
+    fetchFRED('MICH',  force)
+  ]);
+  setLoadMsg('Processing…');
+
+  const days = tradingDays(spyRaw);
+
+  const tsyF  = ffill(tsyRaw,  days);
+  const michF = ffill(michRaw, days);
+
+  const apEntries = getApprovals();
+  const apRaw = {};
+  for (const e of apEntries) apRaw[e.d] = e.v;
+  const apF = ffill(apRaw, days);
+
+  // 20-day changes
+  const chg_sp   = changes20(spyRaw, days, true);  // %
+  const chg_tsy  = changes20(tsyF,   days, false); // pp (×100 for display later)
+  const chg_mich = changes20(michF,  days, false); // pp
+  const chg_ap   = changes20(apF,    days, false); // pp
+
+  // Z-scores with sign convention
+  const z_sp   = zscore(chg_sp,   C.SIGNS.sp500);
+  const z_tsy  = zscore(chg_tsy,  C.SIGNS.tsy);
+  const z_mich = zscore(chg_mich, C.SIGNS.mich);
+  const z_ap   = Object.keys(chg_ap).length >= 4 ? zscore(chg_ap, C.SIGNS.approval) : {};
+
+  const taco = computeTACO(z_sp, z_tsy, z_mich, z_ap);
+
+  return {
+    days, spyRaw, tsyF, michF, apF,
+    chg: { sp:chg_sp, tsy:chg_tsy, mich:chg_mich, ap:chg_ap },
+    z:   { sp:z_sp,   tsy:z_tsy,   mich:z_mich,   ap:z_ap   },
+    taco
+  };
+}
+
+// ── UI HELPERS ───────────────────────────────────────────────────
+function fmt(v, dec=2){ if (v==null||isNaN(v)) return '—'; return (v>0?'+':'')+v.toFixed(dec); }
+function fmtPct(v){ return fmt(v,2)+'%'; }
+function fmtBp(v){  return fmt(v*100,1)+'bp'; }
+
+function zColor(z){
+  if (z === null || z === undefined || isNaN(z)) return 'var(--text2)';
+  if (z >  1.5) return 'var(--red)';
+  if (z >  0.5) return 'var(--amber)';
+  if (z < -0.5) return 'var(--green)';
+  return 'var(--text)';
+}
+function zClass(z){
+  if (z >  0.75) return 'hi';
+  if (z < -0.25) return 'lo';
+  return 'mid';
+}
+function pct(taco, v){
+  const vals = Object.values(taco).map(t=>t.val);
+  return Math.round(vals.filter(x=>x<=v).length/vals.length*100);
+}
+
+// ── RENDER DASHBOARD ─────────────────────────────────────────────
+let myChart = null, chartMode = 'taco', appData = null;
+
+function render(data){
+  appData = data;
+  const dates = Object.keys(data.taco).sort();
+  const last  = dates[dates.length-1];
+  const T     = data.taco[last];
+
+  // Hero number
+  const numEl = document.getElementById('taco-num');
+  numEl.textContent   = fmt(T.val);
+  numEl.className     = 'taco-num ' + zClass(T.val);
+  document.getElementById('taco-date').textContent = last;
+
+  // Stats
+  const prev   = data.taco[dates[dates.length-2]];
+  const week   = data.taco[dates[Math.max(0,dates.length-6)]];
+  const d1     = prev  ? T.val - prev.val  : null;
+  const d5     = week  ? T.val - week.val  : null;
+  const perc   = pct(data.taco, T.val);
+
+  const s1d  = document.getElementById('s1d');
+  const s1w  = document.getElementById('s1w');
+  s1d.textContent = fmt(d1); s1d.style.color = d1>=0?'var(--red)':'var(--green)';
+  s1w.textContent = fmt(d5); s1w.style.color = d5>=0?'var(--red)':'var(--green)';
+  document.getElementById('spct').textContent  = perc+'th';
+  document.getElementById('scomp').textContent = T.n+' / 4';
+
+  document.getElementById('spct').style.color =
+    perc>75?'var(--red)': perc<25?'var(--green)':'var(--amber)';
+
+  // Component cards
+  const COMPS = [
+    { key:'sp500',    zk:'sp',   ck:'sp',   name:'S&P 500 (SPY)',       rawFmt: v=>fmtPct(v),  unit:'20d % chg'  },
+    { key:'tsy',      zk:'tsy',  ck:'tsy',  name:'10Y Treasury',        rawFmt: v=>fmtBp(v),   unit:'20d bp chg' },
+    { key:'mich',     zk:'mich', ck:'mich', name:'1Y Infl Expectations', rawFmt: v=>fmt(v,2)+'pp', unit:'20d pp chg'},
+    { key:'approval', zk:'ap',   ck:'ap',   name:'Trump Approval',       rawFmt: v=>fmt(v,2)+'pp', unit:'20d pp chg'},
+  ];
+
+  document.getElementById('comps-grid').innerHTML = COMPS.map(c=>{
+    const z   = T.parts[c.key];
+    const raw = data.chg[c.ck][last];
+    const col = zColor(z);
+    const bw  = z!=null ? Math.min(100, Math.abs(z)*20) : 0;
+    const bc  = z>0 ? 'var(--red)' : 'var(--green2)';
+    const tag = z==null ? '' :
+      z >  0.5 ? '<span class="comp-tag tag-up">↑ Pressure</span>' :
+      z < -0.5 ? '<span class="comp-tag tag-down">↓ Relief</span>'  :
+                 '<span class="comp-tag">Neutral</span>';
+    return `
+      <div class="comp-card">
+        <div class="comp-name">${c.name}</div>
+        <div class="comp-z" style="color:${col}">${z!=null?fmt(z):'—'}</div>
+        <div class="comp-raw">${raw!=null?c.rawFmt(raw):'No data'} <span style="font-size:10px;color:var(--text3)">${c.unit}</span></div>
+        <div class="comp-bar-bg"><div class="comp-bar-fill" style="width:${bw}%;background:${bc}"></div></div>
+        ${tag}
+      </div>`;
+  }).join('');
+
+  document.getElementById('updated-lbl').textContent = 'Updated '+new Date().toLocaleTimeString();
+
+  drawChart(data);
+}
+
+// ── CHART ────────────────────────────────────────────────────────
+const zeroLinePlugin = {
+  id:'zeroLine',
+  afterDraw(ch){
+    const {ctx,chartArea,scales} = ch;
+    if (!scales.y) return;
+    const y0 = scales.y.getPixelForValue(0);
+    if (y0<chartArea.top||y0>chartArea.bottom) return;
+    ctx.save();
+    ctx.strokeStyle='rgba(100,130,180,0.35)';
+    ctx.lineWidth=1; ctx.setLineDash([5,5]);
+    ctx.beginPath(); ctx.moveTo(chartArea.left,y0); ctx.lineTo(chartArea.right,y0); ctx.stroke();
+    ctx.restore();
+  }
+};
+
+const COMMON_OPTS = {
+  responsive:true, maintainAspectRatio:false,
+  interaction:{mode:'index',intersect:false},
+  plugins:{
+    legend:{display:false},
+    tooltip:{
+      backgroundColor:'#182a4a',
+      borderColor:'#243860', borderWidth:1,
+      titleColor:'#8898bb', bodyColor:'#dde4f5',
+      padding:10
+    }
+  },
+  scales:{
+    x:{ type:'time', time:{unit:'month',tooltipFormat:'MMM d, yyyy'},
+        grid:{color:'rgba(28,45,78,0.8)'}, ticks:{color:'#4a5e7e',maxTicksLimit:8} },
+    y:{ grid:{color:'rgba(28,45,78,0.8)'}, ticks:{color:'#4a5e7e'} }
+  }
+};
+
+function drawChart(data){
+  const dates = Object.keys(data.taco).sort();
+  const ctx   = document.getElementById('chart').getContext('2d');
+  if (myChart){ myChart.destroy(); myChart=null; }
+
+  if (chartMode==='taco'){
+    const pts = dates.map(d=>({x:d, y:data.taco[d].val}));
+    const grad = ctx.createLinearGradient(0,0,0,300);
+    grad.addColorStop(0,'rgba(240,72,72,0.25)');
+    grad.addColorStop(0.5,'rgba(245,166,35,0.07)');
+    grad.addColorStop(1,'rgba(31,203,138,0.02)');
+
+    // Segment colours
+    const pts2 = pts.map(p=>({
+      ...p,
+      borderColor: p.y>1.5?'#f04848': p.y>0.5?'#f5a623': p.y<-0.5?'#1fcb8a':'#4f8ef7'
+    }));
+
+    myChart = new Chart(ctx,{
+      type:'line',
+      data:{ datasets:[{
+        label:'TACO Index', data:pts,
+        segment:{
+          borderColor: ctx2=>{
+            const v = ctx2.p0.parsed.y;
+            return v>1.5?'#f04848': v>0.5?'#f5a623': v<-0.5?'#1fcb8a':'#4f8ef7';
+          }
+        },
+        backgroundColor:grad,
+        borderWidth:2, pointRadius:0, pointHoverRadius:4,
+        fill:true, tension:0.25
+      }]},
+      options:{
+        ...COMMON_OPTS,
+        plugins:{
+          ...COMMON_OPTS.plugins,
+          tooltip:{
+            ...COMMON_OPTS.plugins.tooltip,
+            callbacks:{
+              afterBody(items){
+                const d = items[0].raw.x;
+                const b = data.taco[d]?.parts||{};
+                return [
+                  '',
+                  b.sp500    !=null ? '  S&P 500:   '+fmt(b.sp500)    : null,
+                  b.tsy      !=null ? '  10Y Yield: '+fmt(b.tsy)      : null,
+                  b.mich     !=null ? '  Inflation: '+fmt(b.mich)     : null,
+                  b.approval !=null ? '  Approval:  '+fmt(b.approval) : null,
+                ].filter(Boolean);
+              }
+            }
+          }
+        }
+      },
+      plugins:[zeroLinePlugin]
+    });
+
+  } else {
+    // Components mode
+    const SERIES = [
+      { key:'sp500',    zk:'sp',   label:'S&P 500',       color:'#4f8ef7' },
+      { key:'tsy',      zk:'tsy',  label:'10Y Yield',     color:'#f04848' },
+      { key:'mich',     zk:'mich', label:'Inflation Exp.', color:'#f5a623' },
+      { key:'approval', zk:'ap',   label:'Trump Approval', color:'#1fcb8a' },
+    ];
+    myChart = new Chart(ctx,{
+      type:'line',
+      data:{ datasets: SERIES.map(s=>({
+        label: s.label,
+        data: dates.map(d=>({x:d, y:data.taco[d]?.parts?.[s.key]??null})),
+        borderColor:s.color, backgroundColor:'transparent',
+        borderWidth:1.5, pointRadius:0, tension:0.25, spanGaps:true
+      }))},
+      options:{
+        ...COMMON_OPTS,
+        plugins:{
+          ...COMMON_OPTS.plugins,
+          legend:{
+            display:true,
+            labels:{ color:'#8898bb', font:{size:12}, boxWidth:18, padding:16 }
+          }
+        }
+      },
+      plugins:[zeroLinePlugin]
+    });
+  }
+}
+
+function setMode(m, btn){
+  chartMode=m;
+  document.querySelectorAll('.tab').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  if (appData) drawChart(appData);
+}
+
+// ── LOADING UI ───────────────────────────────────────────────────
+function setLoadMsg(msg){ document.getElementById('load-msg').textContent=msg; }
+function showApp(){ document.getElementById('loading').style.display='none'; document.getElementById('app').style.display='block'; }
+function showLoad(){ document.getElementById('loading').style.display='flex'; document.getElementById('app').style.display='none'; }
+function showErr(msg, persist=false){
+  const el=document.getElementById('err-bar');
+  el.innerHTML=msg; el.style.display='block';
+  if (!persist) setTimeout(()=>el.style.display='none',12000);
+}
+
+// ── FILE:// DETECTION ────────────────────────────────────────────
+function checkProtocol(){
+  if (location.protocol !== 'file:') return true;
+  showApp();
+  showErr(
+    '<strong>Local server required.</strong> Browsers block API calls from <code>file://</code> URLs.<br><br>' +
+    'Run a quick local server in your terminal:<br>' +
+    '<code style="display:block;margin:8px 0;padding:6px 10px;background:rgba(0,0,0,0.3);border-radius:4px">' +
+    'cd "' + location.pathname.replace(/\/[^/]+$/, '').replace(/^\//, '') + '"<br>' +
+    'python3 -m http.server 8080</code>' +
+    'Then open <a href="http://localhost:8080" style="color:#4f8ef7">http://localhost:8080</a> in your browser.',
+    true
+  );
+  renderApList();
+  return false;
+}
+
+// ── BOOT ─────────────────────────────────────────────────────────
+async function boot(force=false){
+  if (!checkProtocol()) return;
+  showLoad();
+  try {
+    const data = await loadData(force);
+    showApp();
+    render(data);
+    renderApList();
+  } catch(e){
+    console.error(e);
+    showApp();
+    // Friendlier CORS/network diagnosis
+    let msg = '⚠ ' + e.message;
+    if (e instanceof TypeError && e.message.toLowerCase().includes('fetch')) {
+      msg = '⚠ Network error — could not reach API. Check your internet connection. ' +
+            'If you just opened this file directly, use a local server (see above).';
+    }
+    showErr(msg);
+    renderApList();
+  }
+}
+
+// Set today's date as default for approval input
+document.getElementById('ap-date').value = new Date().toISOString().slice(0,10);
+
+boot();
+setInterval(()=>boot(false), 30*60*1000);
+</script>
+</body>
+</html>
