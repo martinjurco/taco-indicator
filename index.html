@@ -414,6 +414,27 @@ function renderApList(){
     </div>`).join('');
 }
 
+// ── CORS-SAFE FETCH (direct → proxy fallback) ────────────────────
+const PROXY = 'https://corsproxy.io/?url=';
+
+async function safeFetch(url) {
+  // 1. Try direct
+  try {
+    const r = await fetch(url);
+    if (r.ok) return r;
+    // HTTP error on direct — no point proxying, just throw
+    throw new Error(`HTTP ${r.status}`);
+  } catch (e) {
+    // Only retry via proxy on network/CORS errors (TypeError), not HTTP errors
+    if (!(e instanceof TypeError)) throw e;
+  }
+  // 2. Fallback through corsproxy.io
+  console.warn('Direct fetch blocked, retrying via proxy:', url);
+  const r2 = await fetch(PROXY + encodeURIComponent(url));
+  if (!r2.ok) throw new Error(`HTTP ${r2.status} (via proxy)`);
+  return r2;
+}
+
 // ── FETCH FRED ───────────────────────────────────────────────────
 async function fetchFRED(series, force=false){
   const ck = 'fred_'+series;
@@ -421,13 +442,13 @@ async function fetchFRED(series, force=false){
   if (hit) return hit;
   setLoadMsg('Fetching FRED '+series+'…');
   const url = `https://api.stlouisfed.org/fred/series/observations?series_id=${series}&api_key=${C.FRED_KEY}&file_type=json&observation_start=${C.START}&sort_order=asc`;
-  const r = await fetch(url);
-  if (!r.ok) throw new Error(`FRED ${series} → HTTP ${r.status}`);
+  const r = await safeFetch(url);
   const j = await r.json();
-  if (j.error_message) throw new Error('FRED: ' + j.error_message);
+  if (j.error_message) throw new Error('FRED key/series error: ' + j.error_message);
   const d = {};
   for (const o of j.observations)
     if (o.value!=='.' && o.value!=='') d[o.date] = parseFloat(o.value);
+  if (!Object.keys(d).length) throw new Error(`FRED ${series}: no data returned`);
   cache.set(ck, d, C.FRED_TTL);
   return d;
 }
@@ -438,16 +459,17 @@ async function fetchSPY(force=false){
   const hit = cache.get(ck, force);
   if (hit) return hit;
   setLoadMsg('Fetching S&P 500 (SPY)…');
-  const url = `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY_ADJUSTED&symbol=SPY&outputsize=full&apikey=${C.AV_KEY}`;
-  const r = await fetch(url);
-  if (!r.ok) throw new Error(`Alpha Vantage → HTTP ${r.status}`);
+  const url = `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=SPY&outputsize=full&apikey=${C.AV_KEY}`;
+  const r = await safeFetch(url);
   const j = await r.json();
-  if (j['Note'] || j['Information']) throw new Error('Alpha Vantage rate limit hit. Cached data will be used on next load.');
+  if (j['Note'])        throw new Error('Alpha Vantage rate limit reached (25 calls/day). Try again tomorrow.');
+  if (j['Information']) throw new Error('Alpha Vantage: ' + j['Information'].slice(0, 120));
   const ts = j['Time Series (Daily)'];
-  if (!ts) throw new Error('Unexpected Alpha Vantage response.');
+  if (!ts) throw new Error('Alpha Vantage unexpected response: ' + JSON.stringify(j).slice(0, 120));
   const d = {};
   for (const [dt, v] of Object.entries(ts))
-    if (dt >= C.START) d[dt] = parseFloat(v['5. adjusted close']);
+    if (dt >= C.START) d[dt] = parseFloat(v['4. close']);
+  if (!Object.keys(d).length) throw new Error('Alpha Vantage: no SPY data found from ' + C.START);
   cache.set(ck, d, C.AV_TTL);
   return d;
 }
@@ -508,14 +530,29 @@ function computeTACO(z_sp, z_tsy, z_mich, z_ap){
 
 // ── MAIN DATA PIPELINE ───────────────────────────────────────────
 async function loadData(force=false){
-  const [spyRaw, tsyRaw, michRaw] = await Promise.all([
+  const results = await Promise.allSettled([
     fetchSPY(force),
     fetchFRED('DGS10', force),
     fetchFRED('MICH',  force)
   ]);
+
+  const [spyRes, tsyRes, michRes] = results;
+  const errors = [];
+
+  const spyRaw  = spyRes.status  === 'fulfilled' ? spyRes.value  : (errors.push('S&P 500 → '      + spyRes.reason.message),  {});
+  const tsyRaw  = tsyRes.status  === 'fulfilled' ? tsyRes.value  : (errors.push('10Y Treasury → ' + tsyRes.reason.message),  {});
+  const michRaw = michRes.status === 'fulfilled' ? michRes.value : (errors.push('MICH → '         + michRes.reason.message), {});
+
+  if (errors.length === 3) {
+    throw new Error('All three APIs failed:\n' + errors.join('\n'));
+  }
+  if (errors.length) showErr('⚠ Partial data — ' + errors.join(' | '), false);
+
   setLoadMsg('Processing…');
 
-  const days = tradingDays(spyRaw);
+  // Use SPY dates as calendar; fall back to TSY dates if SPY fetch failed
+  const calendarSource = Object.keys(spyRaw).length > 0 ? spyRaw : tsyRaw;
+  const days = tradingDays(calendarSource);
 
   const tsyF  = ffill(tsyRaw,  days);
   const michF = ffill(michRaw, days);
@@ -803,13 +840,9 @@ async function boot(force=false){
   } catch(e){
     console.error(e);
     showApp();
-    // Friendlier CORS/network diagnosis
-    let msg = '⚠ ' + e.message;
-    if (e instanceof TypeError && e.message.toLowerCase().includes('fetch')) {
-      msg = '⚠ Network error — could not reach API. Check your internet connection. ' +
-            'If you just opened this file directly, use a local server (see above).';
-    }
-    showErr(msg);
+    const lines = e.message.split('\n');
+    const html  = '⚠ ' + lines.map((l,i) => i===0 ? `<strong>${l}</strong>` : `<div style="margin-top:4px;font-size:12px;color:#e09090">${l}</div>`).join('');
+    showErr(html, true);
     renderApList();
   }
 }
