@@ -337,7 +337,7 @@
 
   <!-- FOOTER -->
   <div class="footer">
-    Data sources: <strong>Alpha Vantage</strong> (SPY daily) · <strong>FRED</strong> (DGS10, MICH) · Manual (Trump approval) &nbsp;|&nbsp;
+    Data sources: <strong>FRED</strong> (SP500, DGS10, MICH) · Manual (Trump approval) &nbsp;|&nbsp;
     TACO = avg z-score of 20-trading-day changes · Refreshes every 30 min
   </div>
 
@@ -347,7 +347,7 @@
 /* ================================================================
    TACO — Pressured Index
    Components (equally weighted):
-     1. S&P 500 (SPY)          — Alpha Vantage — 20d % chg — sign −1 (falling = pressure)
+     1. S&P 500 (SP500)        — FRED          — 20d % chg — sign −1 (falling = pressure)
      2. 10Y Treasury (DGS10)   — FRED          — 20d bp chg — sign +1 (rising = pressure)
      3. 1Y Infl Exp (MICH)     — FRED          — 20d pp chg — sign +1 (rising = pressure)
      4. Trump Approval         — Manual        — 20d pp chg — sign −1 (falling = pressure)
@@ -358,9 +358,7 @@
 // ── CONFIG ──────────────────────────────────────────────────────
 const C = {
   FRED_KEY : '1a39325553a02d282a9317725eaec95a',
-  AV_KEY   : 'AGNXML8GGZNHXP77',
   START    : '2025-04-01',
-  AV_TTL   : 22 * 3600e3,   // 22h  (25 calls/day limit)
   FRED_TTL :  6 * 3600e3,   // 6h
   W        : 20,             // 20 trading-day window
   SIGNS    : { sp500:-1, tsy:+1, mich:+1, approval:-1 }
@@ -453,26 +451,7 @@ async function fetchFRED(series, force=false){
   return d;
 }
 
-// ── FETCH ALPHA VANTAGE (SPY) ────────────────────────────────────
-async function fetchSPY(force=false){
-  const ck = 'av_spy';
-  const hit = cache.get(ck, force);
-  if (hit) return hit;
-  setLoadMsg('Fetching S&P 500 (SPY)…');
-  const url = `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=SPY&outputsize=full&apikey=${C.AV_KEY}`;
-  const r = await safeFetch(url);
-  const j = await r.json();
-  if (j['Note'])        throw new Error('Alpha Vantage rate limit reached (25 calls/day). Try again tomorrow.');
-  if (j['Information']) throw new Error('Alpha Vantage: ' + j['Information'].slice(0, 120));
-  const ts = j['Time Series (Daily)'];
-  if (!ts) throw new Error('Alpha Vantage unexpected response: ' + JSON.stringify(j).slice(0, 120));
-  const d = {};
-  for (const [dt, v] of Object.entries(ts))
-    if (dt >= C.START) d[dt] = parseFloat(v['4. close']);
-  if (!Object.keys(d).length) throw new Error('Alpha Vantage: no SPY data found from ' + C.START);
-  cache.set(ck, d, C.AV_TTL);
-  return d;
-}
+// SP500 comes from FRED (series SP500) — free, no rate limit, full history
 
 // ── PROCESSING ───────────────────────────────────────────────────
 function tradingDays(spObj){ return Object.keys(spObj).sort(); }
@@ -531,7 +510,7 @@ function computeTACO(z_sp, z_tsy, z_mich, z_ap){
 // ── MAIN DATA PIPELINE ───────────────────────────────────────────
 async function loadData(force=false){
   const results = await Promise.allSettled([
-    fetchSPY(force),
+    fetchFRED('SP500', force),
     fetchFRED('DGS10', force),
     fetchFRED('MICH',  force)
   ]);
