@@ -13,11 +13,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -26,14 +21,10 @@ jobs:
       - name: Install dependencies
         run: pip install requests
 
-      - name: Fetch approval data
-        run: python scripts/fetch_approval.py
-
-      - name: Commit if data changed
+      - name: Fetch and commit approval data
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git config user.name "github-actions[bot]"
-          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}
-          git add approval.json
-          git diff --cached --quiet || git commit -m "chore: update approval data $(date -u +%Y-%m-%d)"
-          git push
+          curl -sSL https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/scripts/fetch_approval.py -o fetch_approval.py
+          python fetch_approval.py
