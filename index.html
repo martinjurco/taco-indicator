@@ -315,7 +315,7 @@
   <!-- TRUMP APPROVAL INPUT -->
   <div class="approval-section">
     <div class="section-head">
-      <div class="section-title">Trump Approval Rating <span style="font-size:11px;color:var(--text2);font-weight:400">(manual — enter from RealClearPolitics)</span></div>
+      <div class="section-title">Trump Approval Rating <span id="ap-source-lbl" style="font-size:11px;color:var(--text2);font-weight:400">(manual override — auto-data loads from approval.json)</span></div>
     </div>
     <div class="approval-body">
       <div class="approval-form">
@@ -377,8 +377,36 @@ const cache = {
   set(k, d, ttl){ localStorage.setItem(k, JSON.stringify({ d, exp: Date.now()+ttl })); }
 };
 
-// ── APPROVAL STORE ───────────────────────────────────────────────
+// ── APPROVAL STORE (manual localStorage entries) ─────────────────
 function getApprovals(){ try { return JSON.parse(localStorage.getItem('taco_ap')||'[]'); } catch { return []; } }
+
+// ── AUTO-FETCH approval.json (committed by GitHub Action) ─────────
+let _autoApproval = null;   // cached after first load
+
+async function fetchAutoApproval(force=false){
+  if (_autoApproval && !force) return _autoApproval;
+  try {
+    // approval.json lives in the same repo root
+    const r = await fetch('./approval.json?_=' + (force ? Date.now() : 'cached'));
+    if (!r.ok) return {};
+    const j = await r.json();
+    const d = {};
+    for (const e of (j.data || [])) d[e.d] = e.v;
+    _autoApproval = { entries: d, source: j.source || 'auto', updated: j.updated };
+    return _autoApproval;
+  } catch {
+    return {};
+  }
+}
+
+// Merge auto-fetched + manual, manual takes precedence for same date
+async function getAllApprovals(force=false){
+  const auto   = await fetchAutoApproval(force);
+  const manual = getApprovals();                      // [{d, v}, ...]
+  const merged = { ...(auto.entries || {}) };
+  for (const e of manual) merged[e.d] = e.v;         // manual wins
+  return { entries: merged, source: auto.source, updated: auto.updated };
+}
 function setApprovals(a){ localStorage.setItem('taco_ap', JSON.stringify(a)); }
 
 function addApproval(){
@@ -536,10 +564,8 @@ async function loadData(force=false){
   const tsyF  = ffill(tsyRaw,  days);
   const michF = ffill(michRaw, days);
 
-  const apEntries = getApprovals();
-  const apRaw = {};
-  for (const e of apEntries) apRaw[e.d] = e.v;
-  const apF = ffill(apRaw, days);
+  const apMerged = await getAllApprovals(force);
+  const apF = ffill(apMerged.entries || {}, days);
 
   // 20-day changes
   const chg_sp   = changes20(spyRaw, days, true);  // %
@@ -556,7 +582,7 @@ async function loadData(force=false){
   const taco = computeTACO(z_sp, z_tsy, z_mich, z_ap);
 
   return {
-    days, spyRaw, tsyF, michF, apF,
+    days, spyRaw, tsyF, michF, apF, apMerged,
     chg: { sp:chg_sp, tsy:chg_tsy, mich:chg_mich, ap:chg_ap },
     z:   { sp:z_sp,   tsy:z_tsy,   mich:z_mich,   ap:z_ap   },
     taco
@@ -635,17 +661,48 @@ function render(data){
       z >  0.5 ? '<span class="comp-tag tag-up">↑ Pressure</span>' :
       z < -0.5 ? '<span class="comp-tag tag-down">↓ Relief</span>'  :
                  '<span class="comp-tag">Neutral</span>';
+
+    // For approval: if no 20-day change yet, show current value + hint
+    let rawHtml;
+    if (raw != null) {
+      rawHtml = `${c.rawFmt(raw)} <span style="font-size:10px;color:var(--text3)">${c.unit}</span>`;
+    } else if (c.key === 'approval') {
+      const entries = getApprovals();
+      if (entries.length) {
+        const latest = entries[entries.length - 1];
+        rawHtml = `${latest.v.toFixed(1)}% now
+          <span style="font-size:10px;color:var(--text3)">— add entries ≥20 trading days apart for z-score</span>`;
+      } else {
+        rawHtml = `<span style="color:var(--text3)">Enter approval ratings below</span>`;
+      }
+    } else {
+      rawHtml = `<span style="color:var(--text3)">No data</span>`;
+    }
+
     return `
       <div class="comp-card">
         <div class="comp-name">${c.name}</div>
         <div class="comp-z" style="color:${col}">${z!=null?fmt(z):'—'}</div>
-        <div class="comp-raw">${raw!=null?c.rawFmt(raw):'No data'} <span style="font-size:10px;color:var(--text3)">${c.unit}</span></div>
+        <div class="comp-raw">${rawHtml}</div>
         <div class="comp-bar-bg"><div class="comp-bar-fill" style="width:${bw}%;background:${bc}"></div></div>
         ${tag}
       </div>`;
   }).join('');
 
   document.getElementById('updated-lbl').textContent = 'Updated '+new Date().toLocaleTimeString();
+
+  // Show approval data source
+  const apSrc = data.apMerged;
+  const srcEl = document.getElementById('ap-source-lbl');
+  if (apSrc && apSrc.source && Object.keys(apSrc.entries||{}).length > 0) {
+    const pts = Object.keys(apSrc.entries).length;
+    const upd = apSrc.updated ? ' · ' + apSrc.updated.slice(0,10) : '';
+    srcEl.textContent = `auto: ${apSrc.source} · ${pts} pts${upd} — manual entries below override`;
+    srcEl.style.color = 'var(--green)';
+  } else {
+    srcEl.textContent = 'approval.json not found — enter manually below, or set up GitHub Action';
+    srcEl.style.color = 'var(--amber)';
+  }
 
   drawChart(data);
 }
