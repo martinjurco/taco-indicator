@@ -1,0 +1,36 @@
+name: Fetch Trump Approval Data
+
+on:
+  schedule:
+    - cron: '0 10 * * 1'   # Every Monday at 10:00 UTC
+  workflow_dispatch:         # Also runnable manually from the Actions tab
+
+permissions:
+  contents: write
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Fetch approval data
+        run: python scripts/fetch_approval.py
+
+      - name: Commit if data changed
+        run: |
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git add approval.json
+          git diff --cached --quiet || git commit -m "chore: update approval data $(date -u +%Y-%m-%d)"
+          git push
