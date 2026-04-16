@@ -1,69 +1,63 @@
 """
-Fetch Trump approval rating averages and save to approval.json.
+Fetch Trump approval rating averages and commit approval.json
+directly via the GitHub API (no git push needed).
 
 Sources tried in order:
   1. FiveThirtyEight / ABC News approval CSV
-  2. Wikipedia API (parses the approval table from the Trump presidency article)
+  2. Wikipedia API
 
-Run manually:  python scripts/fetch_approval.py
+Environment variables (set automatically by GitHub Actions):
+  GITHUB_TOKEN       — repo token with contents:write
+  GITHUB_REPOSITORY  — e.g. "username/repo-name"
 """
 
+import base64
 import json
 import os
 import re
 import sys
-from datetime import datetime, date
+from datetime import datetime
 
 import requests
 
 START_DATE = "2025-04-01"
-OUT_FILE   = os.path.join(os.path.dirname(__file__), "..", "approval.json")
-HEADERS    = {"User-Agent": "TACO-indicator-bot/1.0 (github actions)"}
+HEADERS    = {"User-Agent": "TACO-indicator-bot/1.0"}
 
 
-# ── SOURCE 1: FiveThirtyEight ────────────────────────────────────────────────
+# ── SOURCE 1: FiveThirtyEight ─────────────────────────────────────
 
 def fetch_538():
-    """
-    538 / ABC News publishes approval averages as a CSV.
-    Multiple candidate URLs in case they change the path.
-    """
     candidates = [
         "https://projects.fivethirtyeight.com/polls/data/approval_averages.csv",
         "https://cdn.projects.fte.app/polls/data/approval_averages.csv",
-        "https://abcnews.go.com/sites/default/files/polls/data/approval_averages.csv",
     ]
-
     for url in candidates:
         try:
-            print(f"  Trying 538: {url}")
+            print(f"  Trying: {url}")
             r = requests.get(url, timeout=20, headers=HEADERS)
             if r.status_code != 200:
-                print(f"    → HTTP {r.status_code}")
+                print(f"    HTTP {r.status_code}")
                 continue
 
             lines = [l for l in r.text.strip().splitlines() if l.strip()]
             if len(lines) < 2:
                 continue
 
-            raw_header = lines[0]
-            # Handle quoted CSV
-            header = [h.strip().strip('"').lower() for h in raw_header.split(",")]
+            header = [h.strip().strip('"').lower() for h in lines[0].split(",")]
 
-            # Locate columns
-            def col(names):
+            def col(*names):
                 for n in names:
                     for i, h in enumerate(header):
                         if n in h:
                             return i
                 return None
 
-            date_col    = col(["date"])
-            approve_col = col(["approve_estimate", "approve", "approval"])
-            name_col    = col(["politician", "name", "subject"])
+            date_col    = col("date")
+            approve_col = col("approve_estimate", "approve", "approval")
+            name_col    = col("politician", "name", "subject")
 
             if date_col is None or approve_col is None:
-                print(f"    → Unexpected columns: {header[:8]}")
+                print(f"    Unexpected columns: {header[:8]}")
                 continue
 
             results = {}
@@ -71,7 +65,6 @@ def fetch_538():
                 parts = [p.strip().strip('"') for p in line.split(",")]
                 if len(parts) <= max(date_col, approve_col):
                     continue
-                # Filter for Trump rows if a name column exists
                 if name_col is not None and "trump" not in parts[name_col].lower():
                     continue
                 try:
@@ -79,123 +72,131 @@ def fetch_538():
                     if d < START_DATE:
                         continue
                     v = float(parts[approve_col])
-                    if 20 <= v <= 80:   # sanity range
+                    if 20 <= v <= 80:
                         results[d] = round(v, 1)
                 except (ValueError, IndexError):
                     continue
 
             if len(results) >= 5:
-                print(f"    → ✓ {len(results)} data points")
+                print(f"    ✓ {len(results)} data points")
                 return results, "FiveThirtyEight / ABC News"
 
         except Exception as e:
-            print(f"    → Error: {e}")
+            print(f"    Error: {e}")
 
     return None, None
 
 
-# ── SOURCE 2: Wikipedia approval table ──────────────────────────────────────
+# ── SOURCE 2: Wikipedia ───────────────────────────────────────────
 
 def fetch_wikipedia():
-    """
-    Parse the Trump presidency Wikipedia article for the approval rating table.
-    Looks for rows containing dates and percentage values.
-    """
-    page_titles = [
+    api = "https://en.wikipedia.org/w/api.php"
+    pages = [
         "Presidency of Donald Trump (2025–2029)",
         "Donald Trump",
     ]
-
-    for title in page_titles:
+    for page in pages:
         try:
-            print(f"  Trying Wikipedia: {title}")
-            api = "https://en.wikipedia.org/w/api.php"
+            print(f"  Trying Wikipedia: {page}")
             r = requests.get(api, params={
-                "action": "parse",
-                "page": title,
-                "prop": "wikitext",
-                "format": "json",
-                "section": 0,   # intro only — approval usually in a section
+                "action": "parse", "page": page,
+                "prop": "wikitext", "format": "json",
             }, timeout=20, headers=HEADERS)
-
             if r.status_code != 200:
                 continue
 
-            j = r.json()
-            wikitext = j.get("parse", {}).get("wikitext", {}).get("*", "")
-            if not wikitext:
-                continue
-
-            # Look for lines like: | 2025-06-01 || 44.2 || 51.3
+            wikitext = r.json().get("parse", {}).get("wikitext", {}).get("*", "")
             results = {}
-            date_pat    = re.compile(r'(\d{4}-\d{2}-\d{2})')
-            percent_pat = re.compile(r'\b(\d{2,3}(?:\.\d)?)\b')
+            date_pat = re.compile(r'(\d{4}-\d{2}-\d{2})')
+            num_pat  = re.compile(r'\b(\d{2,3}(?:\.\d)?)\b')
 
             for line in wikitext.splitlines():
                 dates = date_pat.findall(line)
-                if not dates:
+                if not dates or dates[0] < START_DATE:
                     continue
-                d = dates[0]
-                if d < START_DATE:
-                    continue
-                nums = [float(n) for n in percent_pat.findall(line) if 20 <= float(n) <= 80]
+                nums = [float(n) for n in num_pat.findall(line) if 20 <= float(n) <= 80]
                 if nums:
-                    results[d] = round(nums[0], 1)
+                    results[dates[0]] = round(nums[0], 1)
 
             if len(results) >= 3:
-                print(f"    → ✓ {len(results)} data points")
+                print(f"    ✓ {len(results)} data points")
                 return results, "Wikipedia"
 
         except Exception as e:
-            print(f"    → Error: {e}")
+            print(f"    Error: {e}")
 
     return None, None
 
 
-# ── MERGE WITH EXISTING ──────────────────────────────────────────────────────
+# ── GITHUB API COMMIT ─────────────────────────────────────────────
 
-def load_existing():
-    try:
-        with open(OUT_FILE) as f:
-            existing = json.load(f)
-        return {e["d"]: e["v"] for e in existing.get("data", [])}
-    except Exception:
-        return {}
+def commit_to_github(content_str, token, repo):
+    """Commit approval.json via GitHub API — no git needed."""
+    api_base = f"https://api.github.com/repos/{repo}/contents/approval.json"
+    auth     = {"Authorization": f"token {token}", "Accept": "application/vnd.github+json"}
+
+    # Get existing file SHA (needed for updates)
+    sha = None
+    r = requests.get(api_base, headers=auth, timeout=15)
+    if r.status_code == 200:
+        sha = r.json().get("sha")
+
+    body = {
+        "message": f"chore: update approval data {datetime.utcnow().strftime('%Y-%m-%d')}",
+        "content": base64.b64encode(content_str.encode()).decode(),
+    }
+    if sha:
+        body["sha"] = sha
+
+    r = requests.put(api_base, headers=auth, json=body, timeout=15)
+    if r.status_code in (200, 201):
+        print(f"✓ approval.json committed to {repo}")
+        return True
+    else:
+        print(f"✗ GitHub API error {r.status_code}: {r.text[:200]}")
+        return False
 
 
-# ── MAIN ─────────────────────────────────────────────────────────────────────
+# ── MAIN ─────────────────────────────────────────────────────────
 
 def main():
+    token = os.environ.get("GITHUB_TOKEN")
+    repo  = os.environ.get("GITHUB_REPOSITORY")
+
+    if not token or not repo:
+        print("Missing GITHUB_TOKEN or GITHUB_REPOSITORY — running locally, saving file only.")
+
     print("=" * 50)
     print("Fetching Trump approval data...")
     print("=" * 50)
 
-    new_data, source = fetch_538()
+    data, source = fetch_538()
+    if not data:
+        data, source = fetch_wikipedia()
 
-    if not new_data:
-        new_data, source = fetch_wikipedia()
-
-    if not new_data:
-        print("\n⚠ All sources failed — keeping existing data unchanged.")
+    if not data:
+        print("\n⚠ All sources failed — approval.json not updated.")
         sys.exit(0)
 
-    # Merge: new data wins over old, but keep any old dates not in new data
-    merged = {**load_existing(), **new_data}
-
-    # Build sorted list
-    entries = [{"d": k, "v": v} for k, v in sorted(merged.items()) if k >= START_DATE]
-
-    output = {
+    entries = [{"d": k, "v": v} for k, v in sorted(data.items()) if k >= START_DATE]
+    output  = {
         "updated": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "source": source,
-        "data": entries,
+        "source":  source,
+        "data":    entries,
     }
+    content_str = json.dumps(output, indent=2)
 
-    with open(OUT_FILE, "w") as f:
-        json.dump(output, f, indent=2)
+    print(f"\n{len(entries)} data points  ({entries[0]['d']} → {entries[-1]['d']})")
+    print(f"Source: {source}")
 
-    print(f"\n✓ Saved {len(entries)} data points to approval.json  (source: {source})")
-    print(f"  Date range: {entries[0]['d']} → {entries[-1]['d']}")
+    if token and repo:
+        commit_to_github(content_str, token, repo)
+    else:
+        # Local run — just write the file
+        out = os.path.join(os.path.dirname(__file__), "..", "approval.json")
+        with open(out, "w") as f:
+            f.write(content_str)
+        print(f"Saved locally to approval.json")
 
 
 if __name__ == "__main__":
